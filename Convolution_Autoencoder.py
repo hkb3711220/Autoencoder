@@ -35,12 +35,15 @@ class SegNet(object):
                        pool_indice2, pool_indice3, scope):
 
         with tf.variable_scope(scope):
-            UpSample1 = self.Upsampling(inputs, pool_indice3, 3, 64, step=2) # [8*8*64]
-            conv4 = self.conv_2d(UpSample1, 3, 1, 64, 64) # [8*8*64]
-            UpSample2 = self.Upsampling(conv4, pool_indice2, 3, 64, step=2) # [16*16*64]
-            conv5 = self.conv_2d(UpSample2, 3, 1, 64, 64) # [16*16*64]
-            UpSample3 = self.Upsampling(conv5, pool_indice1, 3, 64, step=2) # [32*32*64]
-            conv6 = self.conv_2d(UpSample3, 3, 1, 64, 64) # [32*32*64]
+            with tf.variable_scope('up1'):
+                UpSample1 = self.deconv_2d(inputs, pool_indice3, 3, 64, step=2) # [8*8*64]
+                conv4 = self.conv_2d(UpSample1, 3, 1, 64, 64) # [8*8*64]
+            with tf.variable_scope('up2'):
+                UpSample2 = self.deconv_2d(conv4, pool_indice2, 3, 64, step=2) # [16*16*64]
+                conv5 = self.conv_2d(UpSample2, 3, 1, 64, 64) # [16*16*64]
+            with tf.variable_scope('up3'):
+                UpSample3 = self.deconv_2d(conv5, pool_indice1, 3, 64, step=2) # [32*32*64]
+                conv6 = self.conv_2d(UpSample3, 3, 1, 64, 64) # [32*32*64]
 
         """ end of Decode """
 
@@ -81,11 +84,13 @@ class SegNet(object):
                                           strides=[1, stride, stride, 1],
                                           padding='SAME')
 
-    def Upsampling(self, inputs, pool_indice, kernel_size, output_channels, step=2):
+    def deconv_2d(self, inputs, pool_indice, kernel_size, output_channels, step=2):
+
+        #out = (in - 1) * s + k
 
         shape = pool_indice.get_shape().as_list()
-        h = shape[1]*2
-        w = shape[2]*2
+        h = (shape[1]-1) * step + kernel_size
+        w = (shape[2]-1) * step + kernel_size
         in_channels = shape[3]
 
         #valueはconv2dと同じく4次元のTensor。
@@ -103,24 +108,39 @@ class SegNet(object):
                                       strides=stride,
                                       padding="SAME")
 
+    def Uppool(self, inputs, pool_indice):
+
+        shape = pool_indice.get_shape().as_list()
+        h = shape[1]*2
+        w = shape[2]*2
+        in_channels = shape[3]
+
+        output_shape = [self.batch_size, h, w, in_channels]
+
+        return tf.image.resize_images(inputs,
+                                      output_shape,
+                                      method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
+
+
     def get_deconv_filter(self, shape):
-        """
-         reference: https://github.com/MarvinTeichmann/tensorflow-fcn
-         """
+
          width = shape[0]
          heigh = shape[0]
-         f = ceil(width/2.0)
+         f = np.ceil(width/2.0)
          c = (2 * f - 1 - f % 2) / (2.0 * f)
-         bilinear = np.zeros([f_shape[0], f_shape[1]])
+         bilinear = np.zeros([shape[0], shape[1]])
+
          for x in range(width):
              for y in range(heigh):
                  value = (1 - abs(x / f - c)) * (1 - abs(y / f - c))
                  bilinear[x, y] = value
-        weights = np.zeros(f_shape)
-        for i in range(f_shape[2]):
-            weights[:, :, i, i] = bilinear
-        init = tf.constant_initializer(value=weights, dtype=tf.float32)
-        return tf.get_variable(name="up_filter", initializer=init, shape=weights.shape)
+
+         weights = np.zeros(shape)
+         for i in range(shape[2]):
+             weights[:, :, i, i] = bilinear
+
+         init = tf.constant_initializer(value=weights, dtype=tf.float32)
+         return tf.get_variable(name='upsample_filter', initializer=init, shape=weights.shape)
 
 
     def create_variable(self, shape):
